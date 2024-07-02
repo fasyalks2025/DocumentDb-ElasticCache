@@ -3,6 +3,7 @@ const { createClient } = require('redis');
 const { MongoClient } = require('mongodb');
 const fs = require('fs');
 const { Hono } = require('hono');
+const { serve } = require('bun');
 
 const redisUrl = process.env.REDIS_URL;
 const mongoUrl = process.env.MONGO_URL;
@@ -94,6 +95,10 @@ app.get('/api/check-connections', (c) => {
   }
 });
 
-app.listen(3000, () => {
-  console.log('Server is running on http://localhost:3000');
+serve({
+  fetch(request) {
+    return app.request(request);
+  },
+  port: 3000,
 });
+console.log('Server is running on http://localhost:3000');
