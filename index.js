@@ -1,49 +1,99 @@
 require('dotenv').config();
 const { createClient } = require('redis');
-
-let redisConnected = false;
+const { MongoClient } = require('mongodb');
+const fs = require('fs');
+const { Hono } = require('hono');
 
 const redisUrl = process.env.REDIS_URL;
-console.log('REDIS_URL:', redisUrl);
+const mongoUrl = process.env.MONGO_URL;
 
-if (!redisUrl) {
-  console.error('REDIS_URL is not defined. Please check your .env file.');
-  process.exit(1);
-}
+let redisConnected = false;
+let mongoConnected = false;
 
-const redisClient = createClient({
-  url: redisUrl
-});
+const app = new Hono();
 
-redisClient.on('ready', () => {
-  console.log('Connected to AWS ElastiCache Redis');
-  redisConnected = true;
-  checkConnections();
-});
+if (redisUrl) {
+  const redisClient = createClient({ url: redisUrl });
 
-redisClient.on('error', (err) => {
-  console.error('Error connecting to AWS ElastiCache Redis:', err);
-  redisConnected = false;
-  checkConnections();
-});
-
-redisClient.connect()
-  .then(() => {
-    console.log('Redis client connection initiated');
-  })
-  .catch((err) => {
-    console.error('Error initiating Redis client connection:', err);
-    redisConnected = false;
+  redisClient.on('ready', () => {
+    redisConnected = true;
+    console.log('Connected to AWS ElastiCache Redis');
     checkConnections();
   });
 
+  redisClient.on('error', (err) => {
+    redisConnected = false;
+    console.error('Error connecting to AWS ElastiCache Redis:', err);
+    checkConnections();
+  });
+
+  redisClient.connect()
+    .then(() => {
+      console.log('Redis client connection initiated');
+    })
+    .catch((err) => {
+      redisConnected = false;
+      console.error('Error initiating Redis client connection:', err);
+      checkConnections();
+    });
+
+  console.log('Attempting to connect to Redis...');
+} else {
+  console.log('REDIS_URL is not defined. Redis will not be started.');
+}
+
+if (mongoUrl) {
+  const ca = [fs.readFileSync('global-bundle.pem')];
+  const mongoClient = new MongoClient(mongoUrl, {
+    tls: true,
+    tlsCAFile: 'global-bundle.pem'
+  });
+
+  mongoClient.connect()
+    .then(() => {
+      mongoConnected = true;
+      console.log('Connected to Amazon DocumentDB');
+      return mongoClient.db().admin().ping();
+    })
+    .then(() => {
+      console.log('Successfully pinged Amazon DocumentDB');
+      checkConnections();
+    })
+    .catch((err) => {
+      mongoConnected = false;
+      console.error('Error connecting to Amazon DocumentDB:', err);
+      checkConnections();
+    });
+
+  console.log('Attempting to connect to MongoDB...');
+} else {
+  console.log('MONGO_URL is not defined. MongoDB will not be started.');
+}
+
 function checkConnections() {
-  console.log('Checking Redis connection status...');
-  if (redisConnected) {
-    console.log('Redis is connected');
+  if (redisConnected && mongoConnected) {
+    console.log('Both Redis and MongoDB are connected');
+  } else if (redisConnected) {
+    console.log('Redis is connected, MongoDB is not connected');
+  } else if (mongoConnected) {
+    console.log('MongoDB is connected, Redis is not connected');
   } else {
-    console.log('Redis is not connected');
+    console.log('Neither Redis nor MongoDB are connected');
   }
 }
 
-console.log('Script is running and attempting to connect to Redis...');
+app.get('/api/check-connections', (c) => {
+  if (redisConnected && mongoConnected) {
+    return c.json({ status: 'Both Redis and MongoDB are connected' });
+  } else if (redisConnected) {
+    return c.json({ status: 'Redis is connected, MongoDB is not connected' });
+  } else if (mongoConnected) {
+    return c.json({ status: 'MongoDB is connected, Redis is not connected' });
+  } else {
+    return c.json({ status: 'Neither Redis nor MongoDB are connected' });
+  }
+});
+
+app.listen(3000, () => {
+  console.log('Server is running on http://localhost:3000');
+});
